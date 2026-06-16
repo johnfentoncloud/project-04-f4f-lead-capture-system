@@ -17,7 +17,7 @@ This project demonstrates serverless application development, API integration, d
 
 ## Architecture
 
-![Project Architecture](architecture\project-04-f4f-lead-capture-architecture.drawio.png)
+![Project Architecture](architecture/project-04-f4f-lead-capture-architecture.drawio.png)
 
 Fenton4Fitness Website
 
