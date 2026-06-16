@@ -17,6 +17,8 @@ This project demonstrates serverless application development, API integration, d
 
 ## Architecture
 
+![Project Architecture](C:\Users\james\Desktop\Cloud-Portfolio\projects\project-04-f4f-lead-capture-system\architecture\project-04-f4f-lead-capture-architecture.drawio.png)
+
 Fenton4Fitness Website
 
 ↓
@@ -32,6 +34,12 @@ AWS Lambda (f4f-lead-handler)
 ├── Amazon SES (Email Notifications)
 
 └── Google Sheets Integration (Apps Script Webhook)
+
+---
+
+## Overview
+
+This project transforms the Fenton4Fitness website contact form into a complete lead management system built on AWS.
 
 ---
 
