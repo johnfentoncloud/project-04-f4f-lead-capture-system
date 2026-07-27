@@ -1,0 +1,21 @@
+# Environment variables and secret-bearing local configuration
+.env
+.env.*
+!.env.example
+*.local.json
+*.tmp.json
+docs/ses-production-access-request.json
+
+# Python and Lambda build artifacts
+__pycache__/
+*.py[cod]
+*.zip
+.lambda-build/
+
+# Local operational artifacts
+.local-backups/
+exports/
+test-exports/
+*.tfstate
+*.tfstate.*
+.terraform/
