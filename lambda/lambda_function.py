@@ -21,6 +21,7 @@ DYNAMODB_TABLE = os.environ["DYNAMODB_TABLE"]
 GOOGLE_SHEETS_WEBHOOK_URL = os.environ.get("GOOGLE_SHEETS_WEBHOOK_URL", "")
 OWNER_EMAIL = os.environ.get("OWNER_EMAIL", "")
 SES_FROM_EMAIL = os.environ.get("SES_FROM_EMAIL", "")
+SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN", "")
 ALLOWED_ORIGINS = {
     origin.strip()
     for origin in os.environ.get("ALLOWED_ORIGINS", "").split(",")
@@ -29,8 +30,15 @@ ALLOWED_ORIGINS = {
 
 TABLE = boto3.resource("dynamodb", region_name=AWS_REGION).Table(DYNAMODB_TABLE)
 SES = boto3.client("ses", region_name=AWS_REGION)
+SNS = boto3.client("sns", region_name=AWS_REGION)
 
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+TRAINING_LEAD_TYPES = {
+    "youth-athlete": "Youth athlete",
+    "adult-personal-training": "Adult training",
+    "team-training": "Team training",
+    "general-inquiry": "General inquiry",
+}
 
 SUPPORTED_FIELDS = {
     "submissionType",
@@ -150,7 +158,13 @@ def _clean_value(value):
     return value
 
 
-def _normalized_submission(body):
+def _request_id(event):
+    request_context = event.get("requestContext") if isinstance(event, dict) else {}
+    request_id = (request_context or {}).get("requestId")
+    return str(request_id).strip() if request_id else ""
+
+
+def _normalized_submission(body, request_id=""):
     submission = {
         key: _clean_value(body[key])
         for key in SUPPORTED_FIELDS
@@ -170,9 +184,14 @@ def _normalized_submission(body):
         raise ValueError("A valid email address is required.")
 
     now = datetime.now(timezone.utc).isoformat()
+    lead_id = (
+        str(uuid.uuid5(uuid.NAMESPACE_URL, f"fenton4fitness:{request_id}"))
+        if request_id
+        else str(uuid.uuid4())
+    )
     submission.update(
         {
-            "leadId": str(uuid.uuid4()),
+            "leadId": lead_id,
             "submittedAt": str(submission.get("submittedAt") or now),
             "submissionType": submission_type,
             "leadType": lead_type,
@@ -193,6 +212,57 @@ def _normalized_submission(body):
     submission.setdefault("trainingHistory", submission.get("experienceLevel", ""))
     submission.setdefault("otherInterests", submission.get("additionalDetails", ""))
     return submission
+
+
+def _is_duplicate_error(error):
+    response = getattr(error, "response", {}) or {}
+    return (
+        response.get("Error", {}).get("Code")
+        == "ConditionalCheckFailedException"
+    )
+
+
+def _sms_value(value, max_length):
+    cleaned = re.sub(r"[\r\n\t]+", " ", str(value or ""))
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned[:max_length].rstrip()
+
+
+def _send_training_lead_sms(submission):
+    if not SNS_TOPIC_ARN:
+        return "not_configured"
+
+    interest = TRAINING_LEAD_TYPES.get(submission.get("leadType"))
+    if not interest:
+        return "not_applicable"
+
+    name = _sms_value(submission.get("name"), 45)
+    phone = _sms_value(
+        submission.get("phone") or submission.get("parentPhone"),
+        20,
+    )
+
+    message = "New F4F lead"
+    if name:
+        message += f": {name}"
+    if interest:
+        message += f" - {interest}"
+    message += "."
+    if phone:
+        message += f" Phone: {phone}."
+    message += " Check email for details."
+
+    SNS.publish(
+        TopicArn=SNS_TOPIC_ARN,
+        Message=message[:160],
+        MessageAttributes={
+            "AWS.SNS.SMS.SMSType": {
+                "DataType": "String",
+                "StringValue": "Transactional",
+            }
+        },
+    )
+    return "sent"
 
 
 def _post_to_google_sheets(submission):
@@ -307,7 +377,9 @@ def lambda_handler(event, context):
 
     try:
         body = _parse_body(event)
-        submission = _normalized_submission(body)
+        if str(body.get("website") or "").strip():
+            raise ValueError("Submission rejected.")
+        submission = _normalized_submission(body, _request_id(event))
     except (ValueError, TypeError, json.JSONDecodeError) as error:
         return _response(event if isinstance(event, dict) else {}, 400, {
             "ok": False,
@@ -315,8 +387,24 @@ def lambda_handler(event, context):
         })
 
     try:
-        TABLE.put_item(Item=submission)
+        TABLE.put_item(
+            Item=submission,
+            ConditionExpression="attribute_not_exists(leadId)",
+        )
     except Exception as error:
+        if _is_duplicate_error(error):
+            LOGGER.info(
+                "Duplicate submission ignored: leadId=%s",
+                submission["leadId"],
+            )
+            return _response(event, 200, {
+                "ok": True,
+                "message": "Submission received.",
+                "leadId": submission["leadId"],
+                "submissionType": submission["submissionType"],
+                "leadType": submission["leadType"],
+                "duplicate": True,
+            })
         LOGGER.error("DynamoDB persistence failed: errorType=%s", type(error).__name__)
         return _response(event, 500, {
             "ok": False,
@@ -337,6 +425,11 @@ def lambda_handler(event, context):
     _attempt_delivery(
         "customerConfirmation",
         lambda: _send_customer_confirmation(submission),
+        delivery,
+    )
+    _attempt_delivery(
+        "smsNotification",
+        lambda: _send_training_lead_sms(submission),
         delivery,
     )
 

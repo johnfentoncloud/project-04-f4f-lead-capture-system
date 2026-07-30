@@ -9,10 +9,16 @@ Required environment variables:
 - `GOOGLE_SHEETS_WEBHOOK_URL`
 - `OWNER_EMAIL`
 - `SES_FROM_EMAIL`
+- `SNS_TOPIC_ARN`
 - `ALLOWED_ORIGINS`
 
 The Google webhook URL and email configuration must be supplied through Lambda
 configuration or AWS-managed secret storage. Never commit their values.
+
+`SNS_TOPIC_ARN` identifies the Terraform-managed
+`f4f-training-lead-alerts` topic. The Lambda publishes only eligible training
+inquiries to that topic; phone-number subscriptions are configured separately
+and are never stored in source code or Terraform state.
 
 The function preserves the original lead keys while storing normalized fields
 for fitness, website-service, and testimonial submissions. A testimonial is

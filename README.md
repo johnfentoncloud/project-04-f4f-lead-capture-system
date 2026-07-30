@@ -20,6 +20,7 @@ flowchart LR
     Lambda --> DDB[DynamoDB]
     Lambda --> Sheets[Google Sheets webhook]
     Lambda --> SES[SES transactional email]
+    Lambda --> SNS[SNS training-lead alerts]
     Lambda --> Logs[CloudWatch Logs]
 ```
 
@@ -54,6 +55,10 @@ publication path.
 - DynamoDB stores the normalized submission before optional integrations run.
 - Google Sheets receives the compatible payload through an Apps Script webhook.
 - SES sends the owner notification and customer confirmation independently.
+- SNS publishes one concise transactional alert for a newly stored training
+  inquiry. Website-service and testimonial submissions do not trigger SMS.
+- A conditional DynamoDB write suppresses duplicate downstream deliveries when
+  API Gateway retries the same request ID.
 - Downstream failures are logged without discarding a stored DynamoDB record.
 - Logs avoid private form contents and webhook values.
 
@@ -65,6 +70,7 @@ The Lambda reads these environment-variable names:
 - `GOOGLE_SHEETS_WEBHOOK_URL`
 - `OWNER_EMAIL`
 - `SES_FROM_EMAIL`
+- `SNS_TOPIC_ARN`
 - `ALLOWED_ORIGINS`
 
 Only the names belong in source control. Values must remain in Lambda
@@ -74,7 +80,8 @@ webhook URLs, credentials, SMTP passwords, form exports, or real customer data.
 ## Security and operations
 
 - The execution role grants only DynamoDB write access to the lead table and
-  SES send access for the approved sender identity.
+  SES send access for the approved sender identity. Terraform adds
+  `sns:Publish` only for the dedicated training-lead topic.
 - DynamoDB point-in-time recovery protects lead storage.
 - Lambda logs have a finite retention period.
 - The Google Sheets call uses bounded retries and a network timeout.
